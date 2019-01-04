@@ -1,0 +1,543 @@
+:plugin: okta_system_log
+:type: input
+:default_codec: json
+
+///////////////////////////////////////////
+START - GENERATED VARIABLES, DO NOT EDIT!
+///////////////////////////////////////////
+:version: %VERSION%
+:release_date: %RELEASE_DATE%
+:changelog_url: %CHANGELOG_URL%
+:include_path: ../../../../logstash/docs/include
+///////////////////////////////////////////
+END - GENERATED VARIABLES, DO NOT EDIT!
+///////////////////////////////////////////
+
+[id="plugins-{type}s-{plugin}"]
+
+=== Okta System Log input plugin
+
+include::{include_path}/plugin_header.asciidoc[]
+
+==== Description
+
+This Logstash input plugin allows you to call an the Okta System Log API, process it as an event,
+and send it on its merry way. The idea behind this plugin is to be able to pull data
+from web-based services but still process them in an on-prem SIEM.
+The plugin supports the rufus style scheduling.
+
+==== Example
+This is a basic configuration. The API key is passed through using the secret store or env variable.
+While it is possible to just put the API key directly into the file, it is NOT recommended.
+The config should look like this:
+
+[source,ruby]
+----------------------------------
+input {
+  okta_system_log {
+    schedule        =>      { every => "30s" }
+    limit           =>      1000
+    auth_token_key  =>      "${key}"
+    hostname        =>      "uri.okta.com"
+  }
+}
+
+output {
+  stdout {
+    codec => rubydebug
+  }
+}
+----------------------------------
+
+Like HTTP poller, this plugin supports the same `metadata_target` and `target` options,
+as well as various scheduling options.
+
+
+[source,ruby]
+----------------------------------
+input {
+  okta_system_log {
+    schedule        =>      { every => "30s" }
+    limit           =>      1000
+    auth_token_key  =>      "${OKTA_API_KEY}"
+    hostname        =>      "uri.okta.com"
+    # Supports "cron", "every", "at" and "in" schedules by rufus scheduler
+    schedule => { cron => "* * * * * UTC"}
+    # A hash of request metadata info (timing, response headers, etc.) will be sent here
+    metadata_target => "http_poller_metadata"
+  }
+}
+
+output {
+  stdout {
+    codec => rubydebug
+  }
+}
+----------------------------------
+
+==== Tracking of current position in watched files
+
+The plugin keeps track of the current position in each file by
+recording it in a separate state file. This makes it
+possible to stop and restart Logstash and have it pick up where it
+left off without missing the lines that were added to the file while
+Logstash was stopped.
+
+By default, the state file is placed in the data directory of Logstash
+with a filename based on the name of the okta instance (i.e. the `hostname` option).
+If you need to explictly set the state file location you can do so
+with the `state_file_path` option.
+
+
+
+Using the HTTP poller with custom a custom CA or self signed cert.
+
+If you have a self signed cert you will need to convert your server's certificate 
+to a valid# `.jks` or `.p12` file. 
+An easy way to do it is to run the following one-liner, 
+substituting your server's URL for the placeholder `MYURL` and `MYPORT`.
+
+[source,ruby]
+----------------------------------
+openssl s_client -showcerts -connect MYURL:MYPORT </dev/null 2>/dev/null|openssl x509 -outform PEM > downloaded_cert.pem; keytool -import -alias test -file downloaded_cert.pem -keystore downloaded_truststore.jks
+----------------------------------
+
+The above snippet will create two files
+`downloaded_cert.pem` and `downloaded_truststore.jks`. 
+You will be prompted to set a password for the `jks` file 
+during this process. To configure logstash 
+use a config like the one that follows.
+
+
+[source,ruby]
+----------------------------------
+ okta_system_log {
+   schedule        =>      { every => "30s" }
+   limit           =>      1000
+   auth_token_key  =>      "${key}"
+   hostname        =>      "uri.okta.com"
+   
+   truststore => "/path/to/downloaded_truststore.jks"
+   truststore_password => "mypassword"
+   schedule => { cron => "* * * * * UTC"}
+ }
+----------------------------------
+
+
+[id="plugins-{type}s-{plugin}-options"]
+==== Okta System Log Input Configuration Options
+
+This plugin supports the following configuration options plus the <<plugins-{type}s-{plugin}-common-options>> described later.
+
+[cols="<,<,<",options="header",]
+|=======================================================================
+|Setting |Input type|Required
+| <<plugins-{type}s-{plugin}-auth_token_file>> |a valid filesystem path|Yes (or use `auth_token_key`)
+| <<plugins-{type}s-{plugin}-auth_token_key>> |<<password,password>>|Yes (or use `auth_token_file`)
+| <<plugins-{type}s-{plugin}-user>> |<<string,string>>|no
+| <<plugins-{type}s-{plugin}-password>> |<<password,password>>|No
+| <<plugins-{type}s-{plugin}-automatic_retries>> |<<number,number>>|No
+| <<plugins-{type}s-{plugin}-cacert>> |a valid filesystem path|No
+| <<plugins-{type}s-{plugin}-client_cert>> |a valid filesystem path|No
+| <<plugins-{type}s-{plugin}-client_key>> |a valid filesystem path|No
+| <<plugins-{type}s-{plugin}-connect_timeout>> |<<number,number>>|No
+| <<plugins-{type}s-{plugin}-cookies>> |<<boolean,boolean>>|No
+| <<plugins-{type}s-{plugin}-filter>> |<<string,string>>|No
+| <<plugins-{type}s-{plugin}-follow_redirects>> |<<boolean,boolean>>|No
+| <<plugins-{type}s-{plugin}-hostname>> |<<string,string>>|Yes
+| <<plugins-{type}s-{plugin}-limit>> |<<number,number>>|No
+| <<plugins-{type}s-{plugin}-keepalive>> |<<boolean,boolean>>|No
+| <<plugins-{type}s-{plugin}-keystore>> |a valid filesystem path|No
+| <<plugins-{type}s-{plugin}-keystore_password>> |<<password,password>>|No
+| <<plugins-{type}s-{plugin}-keystore_type>> |<<string,string>>|No
+| <<plugins-{type}s-{plugin}-metadata_target>> |<<string,string>>|No
+| <<plugins-{type}s-{plugin}-pool_max>> |<<number,number>>|No
+| <<plugins-{type}s-{plugin}-pool_max_per_route>> |<<number,number>>|No
+| <<plugins-{type}s-{plugin}-proxy>> |<<,>>|No
+| <<plugins-{type}s-{plugin}-q>> |<<list,list>>|No
+| <<plugins-{type}s-{plugin}-request_timeout>> |<<number,number>>|No
+| <<plugins-{type}s-{plugin}-retry_non_idempotent>> |<<boolean,boolean>>|No
+| <<plugins-{type}s-{plugin}-schedule>> |<<hash,hash>>|Yes
+| <<plugins-{type}s-{plugin}-since>> |<<string,string>>|No
+| <<plugins-{type}s-{plugin}-state_file_path>> |a valid filesystem path|No
+| <<plugins-{type}s-{plugin}-state_file_fatal_falure>> |<<boolean,boolean>>|No
+| <<plugins-{type}s-{plugin}-socket_timeout>> |<<number,number>>|No
+| <<plugins-{type}s-{plugin}-target>> |<<string,string>>|No
+| <<plugins-{type}s-{plugin}-truststore>> |a valid filesystem path|No
+| <<plugins-{type}s-{plugin}-truststore_password>> |<<password,password>>|No
+| <<plugins-{type}s-{plugin}-truststore_type>> |<<string,string>>|No
+| <<plugins-{type}s-{plugin}-validate_after_inactivity>> |<<number,number>>|No
+|=======================================================================
+
+Also see <<plugins-{type}s-{plugin}-common-options>> for a list of options supported by all
+input plugins.
+
+&nbsp;
+
+[id="plugins-{type}s-{plugin}-auth_token_file"]
+===== `auth_token_file` 
+
+  * Value type is <<path,path>>
+  * There is no default value for this setting.
+  * This option is deprecated and will be removed in future versions of the plugin
+  in favor of `auth_token_file`
+
+The file in which the auth_token for Okta will be contained. This will contain the `auth_token`
+which can have a lot access to your Okta instance.
+
+[id="plugins-{type}s-{plugin}-auth_token_key"]
+===== `auth_token_key` 
+
+  * Value type is <<<password,password>>
+  * There is no default value for this setting.
+  * Secret store docs: https://www.elastic.co/guide/en/logstash/current/keystore.html
+  
+The auth token used to authenticate to Okta. This method is provided solely to add the auth_token
+via secrets store or env variable.
+
+[id="plugins-{type}s-{plugin}-user"]
+===== `user` 
+
+  * Value type is <<string,string>>
+  * There is no default value for this setting.
+
+Username to use with HTTP authentication for ALL requests. Note that you can also set this per-URL.
+If you set this you must also set the `password` option.
+
+[id="plugins-{type}s-{plugin}-password"]
+===== `password` 
+
+  * Value type is <<password,password>>
+  * There is no default value for this setting.
+
+Password to be used in conjunction with the username for HTTP authentication.
+
+[id="plugins-{type}s-{plugin}-automatic_retries"]
+===== `automatic_retries` 
+
+  * Value type is <<number,number>>
+  * Default value is `1`
+
+How many times should the client retry a failing URL. We highly recommend NOT setting this value
+to zero if keepalive is enabled. Some servers incorrectly end keepalives early requiring a retry!
+Note: if `retry_non_idempotent` is set only GET, HEAD, PUT, DELETE, OPTIONS, and TRACE requests will be retried.
+
+[id="plugins-{type}s-{plugin}-cacert"]
+===== `cacert` 
+
+  * Value type is <<path,path>>
+  * There is no default value for this setting.
+
+If you need to use a custom X.509 CA (.pem certs) specify the path to that here
+
+[id="plugins-{type}s-{plugin}-client_cert"]
+===== `client_cert` 
+
+  * Value type is <<path,path>>
+  * There is no default value for this setting.
+
+If you'd like to use a client certificate (note, most people don't want this) set the path to the x509 cert here
+
+[id="plugins-{type}s-{plugin}-client_key"]
+===== `client_key` 
+
+  * Value type is <<path,path>>
+  * There is no default value for this setting.
+
+If you're using a client certificate specify the path to the encryption key here
+
+[id="plugins-{type}s-{plugin}-connect_timeout"]
+===== `connect_timeout` 
+
+  * Value type is <<number,number>>
+  * Default value is `10`
+
+Timeout (in seconds) to wait for a connection to be established. Default is `10s`
+
+[id="plugins-{type}s-{plugin}-cookies"]
+===== `cookies` 
+
+  * Value type is <<boolean,boolean>>
+  * Default value is `true`
+
+Enable cookie support. With this enabled the client will persist cookies
+across requests as a normal web browser would. Enabled by default
+
+[id="plugins-{type}s-{plugin}-filter"]
+===== `filter` 
+
+  * Value type is <<string,string>>
+  * There is no default value for this setting.
+  * Docs: https://developer.okta.com/docs/api/resources/system_log#expression-filter
+  * The plugin will not validate the filter.
+
+An expression filter is useful for performing structured queries 
+where constraints on LogEvent attribute values can be explicitly targeted.
+Use single quotes in the config file, e.g. 'published gt "2017-01-01T00:00:00.000Z"'
+
+[id="plugins-{type}s-{plugin}-follow_redirects"]
+===== `follow_redirects` 
+
+  * Value type is <<boolean,boolean>>
+  * Default value is `true`
+
+Should redirects be followed? Defaults to `true`
+
+[id="plugins-{type}s-{plugin}-hostname"]
+===== `hostname` 
+
+  * Value type is <<string,string>>
+  * There is no default value for this setting.
+  
+The Okta hostname to poll for logs.
+
+Examples:
+
+  * dev-instance.oktapreview.com
+  * org-name.okta.com
+
+An expression filter is useful for performing structured queries 
+where constraints on LogEvent attribute values can be explicitly targeted.
+Use single quotes in the config file, e.g. 'published gt "2017-01-01T00:00:00.000Z"'
+
+[id="plugins-{type}s-{plugin}-limit"]
+===== `limit` 
+
+  * Value type is <<number,number>>
+  * Default value is `1000`
+
+The number of events to pull from the API, between 1 and 1000. Defaults to `1000`
+
+[id="plugins-{type}s-{plugin}-keepalive"]
+===== `keepalive` 
+
+  * Value type is <<boolean,boolean>>
+  * Default value is `true`
+
+Turn this on to enable HTTP keepalive support. We highly recommend setting `automatic_retries` to at least
+one with this to fix interactions with broken keepalive implementations.
+
+[id="plugins-{type}s-{plugin}-keystore"]
+===== `keystore` 
+
+  * Value type is <<path,path>>
+  * There is no default value for this setting.
+
+If you need to use a custom keystore (`.jks`) specify that here. This does not work with .pem keys!
+
+[id="plugins-{type}s-{plugin}-keystore_password"]
+===== `keystore_password` 
+
+  * Value type is <<password,password>>
+  * There is no default value for this setting.
+
+Specify the keystore password here.
+Note, most .jks files created with keytool require a password!
+
+[id="plugins-{type}s-{plugin}-keystore_type"]
+===== `keystore_type` 
+
+  * Value type is <<string,string>>
+  * Default value is `"JKS"`
+
+Specify the keystore type here. One of `JKS` or `PKCS12`. Default is `JKS`
+
+[id="plugins-{type}s-{plugin}-metadata_target"]
+===== `metadata_target` 
+
+  * Value type is <<string,string>>
+  * Default value is `"@metadata"`
+
+If you'd like to work with the request/response metadata.
+Set this value to the name of the field you'd like to store a nested
+hash of metadata.
+
+[id="plugins-{type}s-{plugin}-pool_max"]
+===== `pool_max` 
+
+  * Value type is <<number,number>>
+  * Default value is `50`
+
+Max number of concurrent connections. Defaults to `50`
+
+[id="plugins-{type}s-{plugin}-pool_max_per_route"]
+===== `pool_max_per_route` 
+
+  * Value type is <<number,number>>
+  * Default value is `25`
+
+Max number of concurrent connections to a single host. Defaults to `25`
+
+[id="plugins-{type}s-{plugin}-proxy"]
+===== `proxy` 
+
+  * Value type is <<string,string>>
+  * There is no default value for this setting.
+
+If you'd like to use an HTTP proxy . This supports multiple configuration syntaxes:
+
+1. Proxy host in form: `http://proxy.org:1234`
+2. Proxy host in form: `{host => "proxy.org", port => 80, scheme => 'http', user => 'username@host', password => 'password'}`
+3. Proxy host in form: `{url =>  'http://proxy.org:1234', user => 'username@host', password => 'password'}`
+
+[id="plugins-{type}s-{plugin}-q"]
+===== `q` 
+
+  * Value type is <<list,list>>
+  * There is no default value for this setting.
+  * Docs: https://developer.okta.com/docs/api/resources/system_log#keyword-filter
+  * Documentation Bug: https://github.com/okta/okta.github.io/issues/2500
+  * The plugin will URL encode the list
+  * The query cannot have more than ten items
+  * Query items cannot have a space
+  * Query items cannot be longer than 40 chars
+
+  
+The query parameter q can be used to perform keyword matching
+against a LogEvents object’s attribute values. 
+In order to satisfy the constraint, all supplied keywords must be matched exactly. 
+Note that matching is case-insensitive.
+
+Examples:
+  a) ["foo", "bar"]
+  b) ["new", "york"]
+
+[id="plugins-{type}s-{plugin}-since"]
+===== `since` 
+
+  * Value type is <<string,string>>
+  * There is no default value for this setting.
+  * This plugin will URL encode the parameter.
+  * Docs: https://developer.okta.com/docs/api/resources/system_log#request-parameters
+
+Filters the lower time bound of the log events `published` property. 
+The API will only fetch events seven days before `now` by default. 
+Since Okta documents state that logs are stored for 90 days, 
+the date should be set accordingly.
+Provide the date as an RFC 3339 formatted date
+
+Example:
+  * 2016-10-09T22:25:06-07:00
+  
+[id="plugins-{type}s-{plugin}-state_file_path"]
+===== `state_file_path` 
+
+  * Value type is <<path,path>>
+  * There is no default value for this setting.
+
+Path of the state file (keeps track of the current position 
+of monitored log files) that will be written to disk.
+The default will write state files to `<path.data>/plugins/inputs/okta_system_log`
+
+NOTE: it must be a file path and not a directory path
+
+[id="plugins-{type}s-{plugin}-state_file_fatal_falure"]
+===== `state_file_fatal_falure` 
+
+  * Value type is <<boolean,boolean>>
+  * Default value is `false`
+
+Option to cause a fatal error if the state file can't update. With the value
+set to `false` the state file not updating will not cause the plugin to exit. 
+This option reverses that paradigm.
+
+[id="plugins-{type}s-{plugin}-request_timeout"]
+===== `request_timeout` 
+
+  * Value type is <<number,number>>
+  * Default value is `60`
+
+Timeout (in seconds) for the entire request.
+
+[id="plugins-{type}s-{plugin}-retry_non_idempotent"]
+===== `retry_non_idempotent` 
+
+  * Value type is <<boolean,boolean>>
+  * Default value is `false`
+
+If `automatic_retries` is enabled this will cause non-idempotent HTTP verbs (such as POST) to be retried.
+
+[id="plugins-{type}s-{plugin}-schedule"]
+===== `schedule` 
+
+  * Value type is <<hash,hash>>
+  * There is no default value for this setting.
+
+Schedule of when to periodically poll from the urls
+Format: A hash with
+  + key: "cron" | "every" | "in" | "at"
+  + value: string
+Examples:
+  a) { "every" => "1h" }
+  b) { "cron" => "* * * * * UTC" }
+See: rufus/scheduler for details about different schedule options and value string format
+
+[id="plugins-{type}s-{plugin}-socket_timeout"]
+===== `socket_timeout` 
+
+  * Value type is <<number,number>>
+  * Default value is `10`
+
+Timeout (in seconds) to wait for data on the socket. Default is `10s`
+
+[id="plugins-{type}s-{plugin}-target"]
+===== `target` 
+
+  * Value type is <<string,string>>
+  * There is no default value for this setting.
+
+Define the target field for placing the received data. If this setting is omitted, the data will be stored at the root (top level) of the event.
+
+[id="plugins-{type}s-{plugin}-truststore"]
+===== `truststore` 
+
+  * Value type is <<path,path>>
+  * There is no default value for this setting.
+
+If you need to use a custom truststore (`.jks`) specify that here. This does not work with .pem certs!
+
+[id="plugins-{type}s-{plugin}-truststore_password"]
+===== `truststore_password` 
+
+  * Value type is <<password,password>>
+  * There is no default value for this setting.
+
+Specify the truststore password here.
+Note, most .jks files created with keytool require a password!
+
+[id="plugins-{type}s-{plugin}-truststore_type"]
+===== `truststore_type` 
+
+  * Value type is <<string,string>>
+  * Default value is `"JKS"`
+
+Specify the truststore type here. One of `JKS` or `PKCS12`. Default is `JKS`
+
+[id="plugins-{type}s-{plugin}-urls"]
+===== `urls` 
+
+  * This is a required setting.
+  * Value type is <<hash,hash>>
+  * There is no default value for this setting.
+
+A Hash of urls in this format : `"name" => "url"`.
+The name and the url will be passed in the outputed event
+
+[id="plugins-{type}s-{plugin}-validate_after_inactivity"]
+===== `validate_after_inactivity` 
+
+  * Value type is <<number,number>>
+  * Default value is `200`
+
+How long to wait before checking if the connection is stale before executing a request on a connection using keepalive.
+# You may want to set this lower, possibly to 0 if you get connection errors regularly
+Quoting the Apache commons docs (this client is based Apache Commmons):
+'Defines period of inactivity in milliseconds after which persistent connections must be re-validated prior to being leased to the consumer. Non-positive value passed to this method disables connection validation. This check helps detect connections that have become stale (half-closed) while kept inactive in the pool.'
+See https://hc.apache.org/httpcomponents-client-ga/httpclient/apidocs/org/apache/http/impl/conn/PoolingHttpClientConnectionManager.html#setValidateAfterInactivity(int)[these docs for more info]
+
+
+
+[id="plugins-{type}s-{plugin}-common-options"]
+include::{include_path}/{type}.asciidoc[]
+
+:default_codec!:
