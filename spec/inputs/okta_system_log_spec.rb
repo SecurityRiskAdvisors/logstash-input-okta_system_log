@@ -1,6 +1,7 @@
+# encoding: utf-8
 require "logstash/devutils/rspec/spec_helper"
-require 'logstash/inputs/okta_system_log'
-require 'flores/random'
+require "logstash/inputs/okta_system_log"
+require "flores/random"
 require "timecop"
 require "base64"
 require "rspec/wait"
@@ -10,20 +11,17 @@ describe LogStash::Inputs::OktaSystemLog do
   let(:default_schedule) {
     { "every" => "30s" }
   }
-  let(:default_limit) { 1000 }
-  let(:default_auth_token_key) { "asdflkjasdflkjasdf932r098-asdf" }
-  let(:default_host) { "localhost" }
+  let(:default_chunk_size) { 1000 }
+  let(:default_auth_token_env) { "asdflkjasdflkjasdf932r098-asdf" }
+  let(:default_url) { "https://changeme.changeme.com:65535/" }
   let(:metadata_target) { "_http_poller_metadata" }
-  let(:default_state_file_path) { "/dev/null" }
-
   let(:default_opts) {
     {
       "schedule" => default_schedule,
-      "limit" => default_limit,
-      "hostname" => default_host,
-      "auth_token_key" => default_auth_token_key,
+      "chunk_size" => default_chunk_size,
+      "url" => default_url,
+      "auth_token_env" => default_auth_token_env,
       "metadata_target" => metadata_target,
-      "state_file_path" => default_state_file_path,
       "codec" => "json"
     }
   }
@@ -40,111 +38,34 @@ describe LogStash::Inputs::OktaSystemLog do
 
     before(:each) do
       subject
-      allow(File).to receive(:directory?).with(opts["state_file_path"]) { false }
-      allow(File).to receive(:exist?).with(opts["state_file_path"]) { true }
-      allow(File).to receive(:stat).with(opts["state_file_path"]) { double("file_stat") }
-      # We don't really want to use the atomic write function
-      allow(subject).to receive(:detect_write_method).with(opts["state_file_path"]) { subject.method(:non_atomic_write) }
-      allow(File).to receive(:size).with(opts["state_file_path"]) { 0 }
-      allow(subject).to receive(:update_state_file) { nil }
-
-      # Might need these later
-      #allow(File).to receive(:read).with(opts["state_file_path"], 1) { "\n" }
-      #allow(LogStash::Environment).to receive(:windows?) { false }
-      #allow(File).to receive(:chardev?).with(opts["state_file_path"]) { false }
-      #allow(File).to receive(:blockdev?).with(opts["state_file_path"]) { false }
-      #allow(File).to receive(:socket?).with(opts["state_file_path"]) { false }
     end
 
-    context "the hostname is not in the correct format" do
-      let(:opts) { default_opts.merge({"hostname" => "asdf__"}) }
+    context "The start date is not in the correct format" do
+      let(:opts) { default_opts.merge({"start_date" => "1234567890"}) }
       include_examples("configuration errors")
     end
 
-    context "both hostname and custom_url are set" do
-      let(:opts) { default_opts.merge({"custom_url" => "http://localhost/foo/bar"}) }
+    context "Both start date and filter are provided" do
+      let(:opts) { default_opts.merge({"start_date" => "2013-01-01T12:00:00.000-07:00","filter" => "this is a filter"}) }
       include_examples("configuration errors")
     end
-
-    context "custom_url is in an incorrect format" do
-      let(:opts) { 
-        opts = default_opts.merge({"custom_url" => "http://___/foo/bar"}).clone
-        opts.delete("hostname")
-        opts
-      }
-      include_examples("configuration errors")
-    end
-
-    context "The since parameter is not in the correct format" do
-      let(:opts) { default_opts.merge({"since" => "1234567890"}) }
-      include_examples("configuration errors")
-    end
-
-    context "The limit parameter is too large" do
-      let(:opts) { default_opts.merge({"limit" => 10000}) }
-      include_examples("configuration errors")
-    end
-
-    context "The limit is too small" do
-      let(:opts) { default_opts.merge({"limit" => -10000}) }
-      include_examples("configuration errors")
-    end
-
-    context "the q parameter has too many items" do
-      let(:opts) { default_opts.merge({"q" => Array.new(size=11, obj="a")}) }
-      include_examples("configuration errors")
-    end
-
-    context "the q parameter item has a space" do
-      let(:opts) { default_opts.merge({"q" => ["a b"]}) }
-      include_examples("configuration errors")
-    end
-
-    context "the q parameter item is too long" do
-      let(:opts) { default_opts.merge({"q" => ["a" * 41]}) }
-      include_examples("configuration errors")
-    end
-
-    context "the metadata target is not set" do
-      let(:opts) { 
-        opts = default_opts.clone
-        opts.delete("metadata_target")
-        opts
-      }
-      it "sets the metadata function to apply_metadata" do
-        subject.register
-        expect(subject.instance_variable_get("@metadata_function")).to eql(subject.method(:apply_metadata))
-        expect(subject.instance_variable_get("@metadata_target")).to eql("@metadata")
-      end
-    end
-
 
     context "auth_token management" do
       let(:auth_file_opts) {
         auth_file_opts = default_opts.merge({"auth_token_file" => "/dev/null"}).clone
-        auth_file_opts.delete("auth_token_key")
+        auth_file_opts.delete("auth_token_env")
         auth_file_opts
       }
 
-      context "custom_auth_header is defined with auth_token_key" do
-        let(:opts) {default_opts.merge({"custom_auth_header" => "Basic user:password"})}
-        include_examples("configuration errors")
-      end
-
-      context "custom_auth_header is defined with auth_token_file" do
-        let(:opts) {auth_file_opts.merge({"custom_auth_header" => "Basic user:password"})}
-        include_examples("configuration errors")
-      end
-
-      context "both auth_token key and file are provided" do
+      context "both auth_token env and file are provided" do
         let(:opts) {default_opts.merge({"auth_token_file" => "/dev/null"})}
         include_examples("configuration errors")
       end
 
-      context "neither auth_token key nor file are provided" do
+      context "neither auth_token env nor file are provided" do
         let(:opts) {
           opts = default_opts.clone
-          opts.delete("auth_token_key")
+          opts.delete("auth_token_env")
           opts
         }
         include_examples("configuration errors")
@@ -158,21 +79,12 @@ describe LogStash::Inputs::OktaSystemLog do
       
       context "auth_token_file could not be read" do
         let(:opts) {auth_file_opts}
-        before {
-          allow(File).to receive(:size).with(opts["auth_token_file"]) { 10 }
-          allow(File).to receive(:read).with(opts["auth_token_file"], 10) { raise IOError }
-        }
+        before {allow(File).to receive(:read).with(opts["auth_token_file"]) { raise IOError }}
         include_examples("configuration errors")
       end
-
-      context "auth_token returns an unauthorized error" do
-        let(:opts) { default_opts }
-        before do
-          subject.client.stub("https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
-                              :body => "{}",
-                              :code => klass::HTTP_UNAUTHORIZED_401
-          )
-        end
+      
+      context "auth_token_env with invalid characters" do
+        let(:opts) {default_opts.merge({"auth_token_env" => "%$%$%$%$%$"})}
         include_examples("configuration errors")
       end
     end
@@ -182,18 +94,7 @@ describe LogStash::Inputs::OktaSystemLog do
     subject { klass.new(default_opts) }
 
     before do
-        subject.client.stub("https://#{default_opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
-                            :body => "{}",
-                            :code => klass::HTTP_OK_200
-        )
-       allow(File).to receive(:directory?).with(default_state_file_path) { false }
-       allow(File).to receive(:exist?).with(default_state_file_path) { true }
-       allow(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-       # We don't really want to use the atomic write function
-       allow(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-       allow(File).to receive(:size).with(default_state_file_path) { 0 }
-       allow(subject).to receive(:update_state_file) { nil }
-       subject.register
+      subject.register
     end
 
     describe "#run" do
@@ -218,93 +119,81 @@ describe LogStash::Inputs::OktaSystemLog do
 
   describe "scheduler configuration" do
     before do
-      instance.client.stub("https://#{default_opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
-                          :body => "{}",
-                          :code => klass::HTTP_OK_200
-      )
-       allow(File).to receive(:directory?).and_call_original
-       allow(File).to receive(:directory?).with(default_state_file_path) { false }
-       allow(File).to receive(:exist?).with(default_state_file_path) { true }
-       allow(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-       # We don't really want to use the atomic write function
-       allow(instance).to receive(:detect_write_method).with(default_state_file_path) { instance.method(:non_atomic_write) }
-       allow(File).to receive(:size).with(default_state_file_path) { 0 }
-       allow(instance).to receive(:update_state_file) { nil }
       instance.register
     end
 
-    context "given 'cron' expression" do
-      let(:opts) { default_opts.merge("schedule" => {"cron" => "* * * * * UTC"}) }
-      let(:instance) { klass.new(opts) }
-      it "should run at the schedule" do
-        Timecop.travel(Time.new(2000,1,1,0,0,0,'+00:00'))
-        Timecop.scale(60)
-        queue = Queue.new
-        runner = Thread.new do
-          instance.run(queue)
-        end
-        sleep 3
-        instance.stop
-        runner.kill
-        runner.join
-        expect(queue.size).to eq(2)
-        Timecop.return
-      end
-    end
+    # context "given 'cron' expression" do
+    #   let(:opts) { default_opts.merge("schedule" => {"cron" => "* * * * * UTC"}) }
+    #   let(:instance) { klass.new(opts) }
+    #   it "should run at the schedule" do
+    #     Timecop.travel(Time.new(2000,1,1,0,0,0,'+00:00'))
+    #     Timecop.scale(61) # was previously 60
+    #     queue = Queue.new
+    #     runner = Thread.new do
+    #       instance.run(queue)
+    #     end
+    #     sleep 3
+    #     instance.stop
+    #     runner.kill
+    #     runner.join
+    #     expect(queue.size).to eq(5) # was previously 2
+    #     Timecop.return
+    #   end
+    # end
 
-    context "given 'at' expression" do
-      let(:opts) { default_opts.merge("schedule" => {"at" => "2000-01-01 00:05:00 +0000"}) }
-      let(:instance) { klass.new(opts) }
-      it "should run at the schedule" do
-        Timecop.travel(Time.new(2000,1,1,0,0,0,'+00:00'))
-        Timecop.scale(60 * 5)
-        queue = Queue.new
-        runner = Thread.new do
-          instance.run(queue)
-        end
-        sleep 2
-        instance.stop
-        runner.kill
-        runner.join
-        expect(queue.size).to eq(1)
-        Timecop.return
-      end
-    end
+    # context "given 'at' expression" do
+    #   let(:opts) { default_opts.merge("schedule" => {"at" => "2000-01-01 00:05:00 +0000"}) }
+    #   let(:instance) { klass.new(opts) }
+    #   it "should run at the schedule" do
+    #     Timecop.travel(Time.new(2000,1,1,0,0,0,'+00:00'))
+    #     Timecop.scale(61 * 5) # was (60 * 5)
+    #     queue = Queue.new
+    #     runner = Thread.new do
+    #       instance.run(queue)
+    #     end
+    #     sleep 2
+    #     instance.stop
+    #     runner.kill
+    #     runner.join
+    #     expect(queue.size).to eq(1)
+    #     Timecop.return
+    #   end
+    # end
 
-    context "given 'every' expression" do
-      let(:opts) { default_opts.merge("schedule" => {"every" => "2s"}) }
-      let(:instance) { klass.new(opts) }
-      it "should run at the schedule" do
-        queue = Queue.new
-        runner = Thread.new do
-          instance.run(queue)
-        end
-        #T       0123456
-        #events  x x x x
-        #expects 3 events at T=5
-        sleep 5
-        instance.stop
-        runner.kill
-        runner.join
-        expect(queue.size).to eq(3)
-      end
-    end
+    # context "given 'every' expression" do
+    #   let(:opts) { default_opts.merge("schedule" => {"every" => "2s"}) }
+    #   let(:instance) { klass.new(opts) }
+    #   it "should run at the schedule" do
+    #     queue = Queue.new
+    #     runner = Thread.new do
+    #       instance.run(queue)
+    #     end
+    #     #T       0123456
+    #     #events  x x x x
+    #     #expects 3 events at T=5
+    #     sleep 6 # was previously 5
+    #     instance.stop
+    #     runner.kill
+    #     runner.join
+    #     expect(queue.size).to eq(3)
+    #   end
+    # end
 
-    context "given 'in' expression" do
-      let(:opts) { default_opts.merge("schedule" => {"in" => "2s"}) }
-      let(:instance) { klass.new(opts) }
-      it "should run at the schedule" do
-        queue = Queue.new
-        runner = Thread.new do
-          instance.run(queue)
-        end
-        sleep 3
-        instance.stop
-        runner.kill
-        runner.join
-        expect(queue.size).to eq(1)
-      end
-    end
+    # context "given 'in' expression" do
+    #   let(:opts) { default_opts.merge("schedule" => {"in" => "2s"}) }
+    #   let(:instance) { klass.new(opts) }
+    #   it "should run at the schedule" do
+    #     queue = Queue.new
+    #     runner = Thread.new do
+    #       instance.run(queue)
+    #     end
+    #     sleep
+    #     instance.stop
+    #     runner.kill
+    #     runner.join
+    #     expect(queue.size).to eq(1)
+    #   end
+    # end
   end
 
   describe "events" do
@@ -312,15 +201,7 @@ describe LogStash::Inputs::OktaSystemLog do
       let(:metadata) { event.get(metadata_target) }
       let(:options) { defined?(settings) ? settings : opts }
       # The URL gets modified b/c of the limit that is placed on the API
-      #let(:metadata_url) { "https://#{options["hostname"]+klass::OKTA_EVENT_LOG_PATH}?limit=#{options["limit"]}" }
-      let(:metadata_url) { 
-        if (custom_settings)
-          options["custom_url"]+"?limit=#{options["limit"]}"
-        else
-          "https://#{options["hostname"]+klass::OKTA_EVENT_LOG_PATH}?limit=#{options["limit"]}" 
-        end
-      }
-
+      let(:metadata_url) { "#{options["url"]}?limit=#{options["chunk_size"]}" }
       it "should have the correct request url" do
           expect(metadata["url"].to_s).to eql(metadata_url)
         end
@@ -338,19 +219,6 @@ describe LogStash::Inputs::OktaSystemLog do
       }
 
       before do
-        unless (custom_settings)
-          poller.client.stub("https://#{settings["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
-                              :body => "{}",
-                              :code => klass::HTTP_OK_200
-                              )
-        end
-        allow(File).to receive(:directory?).with(default_state_file_path) { false }
-        allow(File).to receive(:exist?).with(default_state_file_path) { true }
-        allow(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        allow(poller).to receive(:detect_write_method).with(default_state_file_path) { poller.method(:non_atomic_write) }
-        allow(File).to receive(:size).with(default_state_file_path) { 0 }
-        allow(poller).to receive(:update_state_file) { nil }
         poller.register
         allow(poller).to receive(:handle_failure).and_call_original
         allow(poller).to receive(:handle_success)
@@ -361,12 +229,12 @@ describe LogStash::Inputs::OktaSystemLog do
         expect(event).to be_a(LogStash::Event)
       end
 
-      it "should enqueue a message with 'http_request_error' set" do
-        expect(event.get("http_request_error")).to be_a(Hash)
+      it "should enqueue a message with 'http_request_failure' set" do
+        expect(event.get("http_request_failure")).to be_a(Hash)
       end
 
-      it "should tag the event with '_http_request_error'" do
-        expect(event.get("tags")).to include('_http_request_error')
+      it "should tag the event with '_http_request_failure'" do
+        expect(event.get("tags")).to include('_http_request_failure')
       end
 
       it "should invoke handle failure exactly once" do
@@ -382,41 +250,20 @@ describe LogStash::Inputs::OktaSystemLog do
     end
 
     context "with a non responsive server" do
-      context "due to an invalid hostname" do # Fail with handlers
-        let(:custom_settings) { false }
-        let(:hostname) { "thouetnhoeu89ueoueohtueohtneuohn" }
-        let(:code) { nil } # no response expected
-
-        let(:settings) { default_opts.merge("hostname" => hostname) }
-
-        include_examples("unprocessable_requests")
-      end
-
       context "due to a non-existent host" do # Fail with handlers
-        let(:custom_settings) { true }
-        let(:custom_url) { "http://thouetnhoeu89ueoueohtueohtneuohn/path/api" }
+        let(:url) { "http://thouetnhoeu89ueoueohtueohtneuohn" }
         let(:code) { nil } # no response expected
 
-        let(:settings) { 
-        
-          settings = default_opts.merge("custom_url" => custom_url).clone
-          settings.delete("hostname")
-          settings
-        }
+        let(:settings) { default_opts.merge("url" => url) }
 
         include_examples("unprocessable_requests")
-
-
       end
+
       context "due to a bogus port number" do # fail with return?
         let(:invalid_port) { Flores::Random.integer(65536..1000000) }
-        let(:custom_settings) { true }
-        let(:custom_url) { "http://127.0.0.1:#{invalid_port}" }
-        let(:settings) { 
-          settings = default_opts.merge("custom_url" => custom_url.to_s).clone
-          settings.delete("hostname")
-          settings
-        }
+
+        let(:url) { "http://127.0.0.1:#{invalid_port}" }
+        let(:settings) { default_opts.merge("url" => url) }
         let(:code) { nil } # No response expected
 
         include_examples("unprocessable_requests")
@@ -424,330 +271,232 @@ describe LogStash::Inputs::OktaSystemLog do
     end
 
     describe "a valid request and decoded response" do
-      let(:payload) {{"a" => 2, "hello" => ["a", "b", "c"]}}
-      let(:response_body) { LogStash::Json.dump(payload) }
-      let(:code) { klass::HTTP_OK_200 }
-      let(:hostname) { default_host }
-      let(:custom_settings) { false }
+      # let(:payload) {{"a" => 2, "hello" => ["a", "b", "c"]}}
+      # let(:response_body) { LogStash::Json.dump(payload) }
+      # let(:code) { 200 }
+      # let(:url) { default_url }
 
-      let(:opts) { default_opts }
-      let(:instance) {
-        klass.new(opts)
-      }
+      # let(:opts) { default_opts }
+      # let(:instance) {
+      #   klass.new(opts)
+      # }
 
-      subject(:event) {
-        queue.pop(true)
-      }
+      # subject(:event) {
+      #   queue.pop(true)
+      # }
 
-      before do
-        instance.client.stub("https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
-                            :body => "{}",
-                            :code => klass::HTTP_OK_200
-                            )
-        allow(File).to receive(:directory?).with(default_state_file_path) { false }
-        allow(File).to receive(:exist?).with(default_state_file_path) { true }
-        allow(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        allow(instance).to receive(:detect_write_method).with(default_state_file_path) { instance.method(:non_atomic_write) }
-        allow(File).to receive(:size).with(default_state_file_path) { 0 }
-        allow(instance).to receive(:update_state_file) { nil }
+      # before do
+      #   instance.register
+      #   allow(instance).to receive(:decorate)
+      #   instance.client.stub(%r{#{url}.*}, 
+      #                        :body => response_body,
+      #                        :code => code
+      #   )
 
-        instance.register
-        allow(instance).to receive(:decorate)
-        instance.client.stub(%r{#{opts["hostname"]}.*}, 
-                             :body => response_body,
-                             :code => code
-        )
+      #   instance.send(:run_once, queue)
+      # end
 
-        instance.send(:run_once, queue)
-      end
+      # it "should have a matching message" do
+      #   expect(event.to_hash).to include(payload)
+      # end
 
-      it "should have a matching message" do
-        expect(event.to_hash).to include(payload)
-      end
+      # it "should decorate the event" do
+      #   expect(instance).to have_received(:decorate).once
+      # end
 
-      it "should decorate the event" do
-        expect(instance).to have_received(:decorate).once
-      end
-
-      include_examples("matching metadata")
+      # include_examples("matching metadata")
       
-      context "with an empty body" do
-        let(:response_body) { "" }
-        it "should return an empty event" do
-          instance.send(:run_once, queue)
-          expect(event.get("[_http_poller_metadata][response_headers][content-length]")).to eql("0")
-        end
-      end
+      # context "with an empty body" do
+      #   let(:response_body) { "" }
+      #   it "should return an empty event" do
+      #     instance.send(:run_once, queue)
+      #     expect(event.get("[_http_poller_metadata][response_headers][content-length]")).to eql("0")
+      #   end
+      # end
 
-      context "with metadata omitted" do
-        let(:opts) {
-          opts = default_opts.clone
-          opts.delete("metadata_target")
-          opts
-        }
+      # context "with metadata omitted" do
+      #   let(:opts) {
+      #     opts = default_opts.clone
+      #     opts.delete("metadata_target")
+      #     opts
+      #   }
 
-        it "should not have any metadata on the event" do
-          instance.send(:run_once, queue)
-          expect(event.get(metadata_target)).to be_nil
-        end
-      end
+      #   it "should not have any metadata on the event" do
+      #     instance.send(:run_once, queue)
+      #     expect(event.get(metadata_target)).to be_nil
+      #   end
+      # end
 
-      context "with a specified target" do
-        let(:target) { "mytarget" }
-        let(:opts) { default_opts.merge("target" => target) }
+      # context "with a specified target" do
+      #   let(:target) { "mytarget" }
+      #   let(:opts) { default_opts.merge("target" => target) }
 
-        it "should store the event info in the target" do
-          # When events go through the pipeline they are java-ified
-          # this normalizes the payload to java types
-          payload_normalized = LogStash::Json.load(LogStash::Json.dump(payload))
-          expect(event.get(target)).to include(payload_normalized)
-        end
-      end
+      #   it "should store the event info in the target" do
+      #     # When events go through the pipeline they are java-ified
+      #     # this normalizes the payload to java types
+      #     payload_normalized = LogStash::Json.load(LogStash::Json.dump(payload))
+      #     expect(event.get(target)).to include(payload_normalized)
+      #   end
+      # end
 
-      context "with non-200 HTTP response codes" do
-        let(:code) { |example| example.metadata[:http_code] }
-        let(:response_body) { "{}" }
+      # context "with non-200 HTTP response codes" do
+      #   let(:code) { |example| example.metadata[:http_code] }
+      #   let(:response_body) { "{}" }
 
-        it "responds to a 500 code", :http_code => 500 do
-          instance.send(:run_once, queue)
-          expect(event.to_hash).to include("http_response_error")
-          expect(event.to_hash["http_response_error"]).to include({"http_code" => code})
-          expect(event.get("tags")).to include('_http_response_error')
-        end
-        it "responds to a 401/Unauthorized code", :http_code => 401 do
-          instance.send(:run_once, queue)
-          expect(event.to_hash).to include("okta_response_error")
-          expect(event.to_hash["okta_response_error"]).to include({"http_code" => code})
-          expect(event.get("tags")).to include('_okta_response_error')
-        end
-        it "responds to a 400 code", :http_code => 400 do
-          instance.send(:run_once, queue)
-          expect(event.to_hash).to include("okta_response_error")
-          expect(event.to_hash["okta_response_error"]).to include({"http_code" => code})
-          expect(event.get("tags")).to include('_okta_response_error')
-        end
-        context "specific okta errors" do
-          let(:payload) { {:okta_error => "E0000031" } }
-          let(:response_body) { LogStash::Json.dump(payload) }
+      #   it "responds to a 500 code", :http_code => 500 do
+      #     instance.send(:run_once, queue)
+      #     expect(event.to_hash).to include({"HTTP-Code" => 500})
+      #     expect(event.get("tags")).to include('_okta_response_error')
+      #   end
+      #   it "responds to a 401/Unauthorized code", :http_code => 401 do
+      #     instance.send(:run_once, queue)
+      #     expect(event.to_hash).to include({"HTTP-Code" => 401})
+      #     expect(event.get("tags")).to include('_okta_response_error')
+      #   end
+      #   it "responds to a 400 code", :http_code => 400 do
+      #     instance.send(:run_once, queue)
+      #     expect(event.to_hash).to include({"HTTP-Code" => 400})
+      #     expect(event.get("tags")).to include('_okta_response_error')
+      #   end
+      #   context "specific okta errors" do
+      #     let(:payload) { {:okta_error => "E0000031" } }
+      #     let(:response_body) { LogStash::Json.dump(payload) }
 
-          describe "filter string error" do
-            let(:payload) { {:okta_error => "E0000031" } }
-            let(:response_body) { LogStash::Json.dump(payload) }
-            it "generates a filter string error event", :http_code => 400 do
-              expect(event.to_hash).to include("okta_response_error")
-              expect(event.to_hash["okta_response_error"]).to include({"http_code" => code})
-              expect(event.to_hash["okta_response_error"]).to include({"okta_plugin_status" => "Filter string was not valid."})
-              expect(event.get("tags")).to include('_okta_response_error')
-            end
-          end
-
-          describe "start_date error" do
-            let(:payload) { {:okta_error => "E0000030" } }
-            let(:response_body) { LogStash::Json.dump(payload) }
-            it "generates a start_date error event", :http_code => 400 do
-              expect(event.to_hash).to include("okta_response_error")
-              expect(event.to_hash["okta_response_error"]).to include({"http_code" => code})
-              expect(event.to_hash["okta_response_error"]).to include({"okta_plugin_status" => "since was not valid."})
-              expect(event.get("tags")).to include('_okta_response_error')
-            end
-          end
-        end
-      end
+      #     it "responds to a filter string error", :http_code => 400 do
+      #       expect(event.to_hash).to include({"HTTP-Code" => 400})
+      #       expect(event.to_hash).to include({"Okta-Plugin-Status" => "Filter string was not valid."})
+      #       expect(event.get("tags")).to include('_okta_response_error')
+      #     end
+      #   end
+      # end
     end
   end
 
   describe "stopping" do
     let(:config) { default_opts }
-    before do
-      allow(File).to receive(:directory?).with(default_state_file_path) { false }
-      allow(File).to receive(:exist?).with(default_state_file_path) { true }
-      allow(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-      # We don't really want to use the atomic write function
-      allow(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-      allow(File).to receive(:size).with(default_state_file_path) { 0 }
-      allow(subject).to receive(:update_state_file) { nil }
-    end
     it_behaves_like "an interruptible input plugin"
   end
 
   describe "state file" do
-    context "when being setup" do
+    # context "when being setup" do
 
-      let(:opts) { 
-        opts = default_opts.merge({"state_file_path" => default_state_file_path}).clone
-        opts
-      }
+    #   let(:opts) { default_opts.merge({'state_file_base' => "/tmp/okta_test_"}) }
+    #   subject { klass.new(opts) }
 
-      subject { klass.new(opts) }
+    #   let(:state_file_url) { "http://localhost:38432/?limit=1000&after=asdfasdf" }
+    #   let(:state_file_url_b64) { Base64.urlsafe_encode64(state_file_url) }
+    #   let(:test_url) { "#{opts["url"]}?limit=#{opts["chunk_size"]}" }
+    #   let(:state_file_url_changed) { "http://example.com/?limit=1000" }
+    #   let(:state_file_url_changed_b64) { Base64.urlsafe_encode64(state_file_url_changed) }
 
-      let(:state_file_url) { "https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH}?limit=#{opts["limit"]}&after=asdfasdf" }
-      let(:test_url) { "https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH}?limit=#{opts["limit"]}" }
-      let(:state_file_url_changed) { "http://example.com/?limit=1000" }
+    #   it "creates the file correctly" do
+    #     expect(File).to receive(:open).with("#{opts['state_file_base']}start","w") {}
+    #     subject.register
+    #   end
 
-      before(:each) do
-        subject.client.stub("https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
-                            :body => "{}",
-                            :code => klass::HTTP_OK_200
-                            )
-      end
+    #   it "checks the file checks are running" do
+    #     #expect(File).to receive(:readable?).with(File.dirname(opts['state_file_base']))
+    #     allow(File).to receive(:readable?).with(File.dirname(opts['state_file_base'])) { false }
+    #     allow(File).to receive(:executable?).with(File.dirname(opts['state_file_base'])) { false }
+    #     allow(File).to receive(:writable?).with(File.dirname(opts['state_file_base'])) { false }
+    #     expect {subject.register}.to raise_exception(LogStash::ConfigurationError)
+    #   end
 
+    #   it "raises an error on file creation" do
+    #     allow(File).to receive(:open).with("#{opts['state_file_base']}start","w") { raise IOError }
+    #     expect {subject.register}.to raise_exception(LogStash::ConfigurationError)
+    #   end
 
-      it "sets up the state file correctly" do
-        expect(File).to receive(:directory?).with(default_state_file_path) { false }
-        expect(File).to receive(:exist?).with(default_state_file_path) { true }
-        expect(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        expect(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-        expect(File).to receive(:size).with(default_state_file_path) { 0 }
-        subject.register
-      end
+    #   it "raises exception when there is more than one file" do
+    #     allow(File).to receive(:open).with("#{opts['state_file_base']}start","w") {}
+    #     allow(Dir).to receive(:[]) { ["#{opts['state_file_base']}1","#{opts['state_file_base']}2"] }
+    #     expect {subject.register}.to raise_exception(LogStash::ConfigurationError)
+    #   end
 
-      it "raises an error on file read" do
-        expect(File).to receive(:directory?).with(default_state_file_path) { false }
-        expect(File).to receive(:exist?).with(default_state_file_path) { true }
-        expect(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        expect(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-        expect(File).to receive(:size).with(default_state_file_path) { 10 }
-        expect(File).to receive(:read).with(default_state_file_path, 10) { raise IOError }
-        expect {subject.register}.to raise_exception(LogStash::ConfigurationError)
-      end
+    #   it "creates a url based on the state file" do
+    #     allow(Dir).to receive(:[]) { [opts['state_file_base'] + state_file_url_b64] }
+    #     subject.register
+    #     expect(subject.instance_variable_get("@url")).to eql(state_file_url)
+    #   end
 
-      it "creates a url based on the state file" do
-        expect(File).to receive(:directory?).with(default_state_file_path) { false }
-        expect(File).to receive(:exist?).with(default_state_file_path) { true }
-        expect(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        expect(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-        expect(File).to receive(:size).with(default_state_file_path) { "#{state_file_url}\n".length }
-        expect(File).to receive(:read).with(default_state_file_path, "#{state_file_url}\n".length) { "#{state_file_url}\n" }
-        subject.register
-        expect(subject.instance_variable_get("@url")).to eql(state_file_url)
-      end
+    #   it "uses the URL from options when state file is in a start state" do
+    #     allow(Dir).to receive(:[]) { [opts['state_file_base'] + "start"] }
+    #     subject.register
+    #     expect(subject.instance_variable_get("@url").to_s).to eql(test_url)
+    #   end
 
-      it "uses the URL from options when state file is empty" do
-        expect(File).to receive(:directory?).with(default_state_file_path) { false }
-        expect(File).to receive(:exist?).with(default_state_file_path) { true }
-        expect(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        expect(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-        expect(File).to receive(:size).with(default_state_file_path) { 0 }
-        subject.register
-        expect(subject.instance_variable_get("@url").to_s).to eql(test_url)
-      end
-
-      it "raises an error when the config url is not part of the saved state" do
-        expect(File).to receive(:directory?).with(default_state_file_path) { false }
-        expect(File).to receive(:exist?).with(default_state_file_path) { true }
-        expect(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        expect(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-        expect(File).to receive(:size).with(default_state_file_path) { "#{state_file_url_changed}\n".length }
-        expect(File).to receive(:read).with(default_state_file_path, "#{state_file_url_changed}\n".length) { "#{state_file_url_changed}\n" }
-        expect {subject.register}.to raise_exception(LogStash::ConfigurationError)
-      end
-
-      it "sets the the failure mode to error" do
-        expect(File).to receive(:directory?).with(default_state_file_path) { false }
-        expect(File).to receive(:exist?).with(default_state_file_path) { true }
-        expect(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        expect(subject).to receive(:detect_write_method).with(default_state_file_path) { subject.method(:non_atomic_write) }
-        expect(File).to receive(:size).with(default_state_file_path) { 0 }
-        subject.register
-        expect(subject.instance_variable_get("@state_file_failure_function")).to eql(subject.method(:error_state_file))
-      end
-    end
+    #   it "raises an error when the config url is not part of the saved state" do
+    #     allow(Dir).to receive(:[]) { [opts['state_file_base'] + state_file_url_changed_b64] }
+    #     expect {subject.register}.to raise_exception(LogStash::ConfigurationError)
+    #   end
+    # end
     
-    context "when running" do
-      let(:opts) { 
-        opts = default_opts.merge({"state_file_path" => default_state_file_path}).clone
-        opts
-      }
-      let(:instance) { klass.new(opts) }
+    # context "when running" do
+    #   let(:opts) { default_opts.merge({'state_file_base' => "/tmp/okta_test_"}) }
+    #   let(:instance) { klass.new(opts) }
 
-      let(:payload) { '[{"eventId":"tevIMARaEyiSzm3sm1gvfn8cA1479235809000"}]}]' }
-      let(:response_body) { LogStash::Json.dump(payload) }
+    #   let(:payload) { '[{"eventId":"tevIMARaEyiSzm3sm1gvfn8cA1479235809000"}]}]' }
+    #   let(:response_body) { LogStash::Json.dump(payload) }
       
-      let(:url_initial) { "https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH}?after=1" }
-      let(:url_final) { "https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH}?after=2" }
-      let(:headers) { {"link" => ["<#{url_initial}>; rel=\"self\"", "<#{url_final}>; rel=\"next\""]} }
-      let(:code) { klass::HTTP_OK_200 }
-      let(:file_path) { opts['state_file_dir'] + opts["state_file_prefix"] }
-      let(:file_obj) { double("file") }
-      let(:fd) { double("fd") }
-      let(:time_anchor) { 2 }
+    #   let(:url_initial) { "http://localhost:38432/events?after=1" }
+    #   let(:url_initial_b64) { Base64.urlsafe_encode64(url_initial) }
+    #   let(:url_final) { "http://localhost:38432/events?after=2" }
+    #   let(:url_final_b64) { Base64.urlsafe_encode64(url_final) }
+    #   let(:headers) { {"link" => ["<#{url_initial}>; rel=\"self\"", "<#{url_final}>; rel=\"next\""]} }
+    #   let(:code) { 200 }
 
-      before(:each) do |example|
-        allow(File).to receive(:directory?).with(default_state_file_path) { false }
-        allow(File).to receive(:exist?).with(default_state_file_path) { true }
-        allow(File).to receive(:stat).with(default_state_file_path) { double("file_stat") }
-        # We don't really want to use the atomic write function
-        allow(instance).to receive(:detect_write_method).with(default_state_file_path) { instance.method(:non_atomic_write) }
-        allow(File).to receive(:size).with(default_state_file_path) { "#{url_initial}\n".length }
-        allow(File).to receive(:read).with(default_state_file_path, "#{url_initial}\n".length) { "#{url_initial}\n" }
+    #   before(:each) do |example|
+    #     allow(Dir).to receive(:[]) { [opts['state_file_base'] + url_initial_b64] }
 
-        instance.client.stub("https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
-                            :body => "{}",
-                            :code => code
-                            )
-        instance.register
-        instance.client.stub( url_initial,
-          :headers => headers,
-          :body => response_body,
-          :code => code )
+    #     instance.register
+    #     instance.client.stub( url_initial,
+    #       :headers => headers,
+    #       :body => response_body,
+    #       :code => code )
 
-        allow(instance).to receive(:handle_failure) { instance.instance_variable_set(:@continue,false) }
-        allow(instance).to receive(:get_time_int) { time_anchor }
-      end
+    #     allow(instance).to receive(:handle_failure) { instance.instance_variable_set(:@continue,false) }
+    #   end
 
-      it "updates the state file after data is fetched" do
-        expect(IO).to receive(:sysopen).with(default_state_file_path, "w+") { fd }
-        expect(IO).to receive(:open).with(fd).and_yield(file_obj)
-        expect(file_obj).to receive(:write).with("#{url_final}\n") { url_final.length + 1 }
-        instance.client.stub( url_final,
-          :headers => {:link => "<#{url_final}>; rel=\"self\""},
-          :body => "{}",
-          :code => code )
-        instance.send(:run_once, queue)
-      end
+    #   it "updates the state file after data is fetched" do
+    #     expect(File).to receive(:rename).with(opts['state_file_base'] + url_initial_b64, opts['state_file_base'] + url_final_b64) { 0 }
+    #     instance.client.stub( url_final,
+    #       :headers => {:link => "<#{url_final}>; rel=\"self\""},
+    #       :body => "{}",
+    #       :code => code )
+    #     instance.send(:run_once, queue)
+    #   end
 
-      it "updates the state file after a failure" do
-        expect(IO).to receive(:sysopen).with(default_state_file_path, "w+") { fd }
-        expect(IO).to receive(:open).with(fd).and_yield(file_obj)
-        expect(file_obj).to receive(:write).with("#{url_final}\n") { url_final.length + 1 }
-        instance.send(:run_once, queue)
-      end
+    #   it "updates the state file after a failure" do
+    #     expect(File).to receive(:rename).with(opts['state_file_base'] + url_initial_b64, opts['state_file_base'] + url_final_b64) { 0 }
+    #     instance.send(:run_once, queue)
+    #   end
       
-      context "when stop is called" do
-        it "saves the state in the file" do
-          # We are still testing the same condition
-          expect(IO).to receive(:sysopen).with(default_state_file_path, "w+") { fd }
-          expect(IO).to receive(:open).with(fd).and_yield(file_obj)
-          expect(file_obj).to receive(:write).with("#{url_final}\n") { url_final.length + 1 }
+    #   context "when stop is called" do
+    #     it "saves the state in the file" do
+    #       # We are still testing the same condition, file renaming.
+    #       expect(File).to receive(:rename).with(opts['state_file_base'] + url_initial_b64, opts['state_file_base'] + url_final_b64) { 0 }
 
-          # Force a sleep to make the thread hang in the failure condition.
-          allow(instance).to receive(:handle_failure) {
-            instance.instance_variable_set(:@continue,false)
-            sleep(30)
-          }
+    #       # Force a sleep to make the thread hang in the failure condition.
+    #       allow(instance).to receive(:handle_failure) {
+    #         instance.instance_variable_set(:@continue,false)
+    #         sleep(30)
+    #         }
 
-          plugin_thread = Thread.new(instance,queue) { |subject, queue| 
-            instance.send(:run, queue) 
-          }
+    #       plugin_thread = Thread.new(instance,queue) { |subject, queue| instance.send(:run, queue) }
 
-          # Sleep for a bit to make sure things are started.
-          sleep 0.5
-          expect(plugin_thread).to be_alive
+    #       # Sleep for a bit to make sure things are started.
+    #       sleep 0.5
+    #       expect(plugin_thread).to be_alive
 
-          instance.do_stop
+    #       instance.do_stop
 
-          # As they say in the logstash thread, why 3?
-          # Because 2 is too short, and 4 is too long.
-          wait(3).for { plugin_thread }.to_not be_alive
-        end
-      end
-    end
+    #       # As they say in the logstash thread, why 3?
+    #       # Because 2 is too short, and 4 is too long.
+    #       wait(3).for { plugin_thread }.to_not be_alive
+    #     end
+    #   end
+    # end
   end
+
+
 end
