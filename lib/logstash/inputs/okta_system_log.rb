@@ -642,6 +642,9 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
         end
       end
 
+      # Store the number of records processed this run
+      records = 0
+
       if (response.body.length > 0)
         @codec.decode(response.body) do |decoded|
           @logger.debug("Pushing event to queue")
@@ -649,6 +652,7 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
           @metadata_function.call(event, requested_url, response, exec_time)
           decorate(event)
           queue << event
+          records = records + 1
         end
       else
         @codec.decode("{}") do |decoded|
@@ -661,7 +665,9 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
 
       if (!next_url.nil? and next_url != @url)
         @url = next_url
-        @continue = true
+        # if we received the record limit, then continue with another request. Else, record the next_url for the next scheduled run.
+        #   This avoids a rate limit error in high volume instances where new logs are always available, but not at the defined limit
+        @continue = (records >= @limit) ? true : false
         @logger.debug("Continue status", :continue => @continue  )
         # Add a sleep since we're gonna hit the API again
         sleep SLEEP_API_RATE_LIMIT
