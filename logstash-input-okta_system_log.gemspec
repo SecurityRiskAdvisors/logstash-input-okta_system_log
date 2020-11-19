@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name          = 'logstash-input-okta_system_log'
-  s.version       = '0.9.1'
+  s.version       = '0.10.0'
   s.licenses      = ['Apache-2.0']
   s.summary       = 'This plugin fetches log events from Okta using the System Log API'
   s.homepage      = 'https://github.com/SecurityRiskAdvisors/logstash-input-okta_system_log'
@@ -31,7 +31,5 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'logstash-devutils', '>= 0.0.16'
   s.add_development_dependency 'flores'
   s.add_development_dependency 'timecop'
-  s.add_development_dependency 'rake', "~> 12.1.0"
-
 
 end

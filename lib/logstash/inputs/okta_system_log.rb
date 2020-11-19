@@ -18,6 +18,7 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
   HTTP_OK_200 = 200
   HTTP_BAD_REQUEST_400 = 400
   HTTP_UNAUTHORIZED_401 = 401
+  HTTP_TOO_MANY_REQUESTS_429 = 429
    
   # Sleep Timers
   SLEEP_API_RATE_LIMIT = 1
@@ -86,6 +87,24 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
   # Ex. ["new", "york"]
   config :q, :validate => :string, :list => true
 
+  # rate_limit will set the pace of collection to the desired limit
+  # Based on: https://developer.okta.com/docs/reference/api/system-log/#system-events
+  # It supports three convenience parameters of RATE_SLOW, RATE_MEDIUM and RATE_FAST
+  # A user can also set a value of 0.1 -> 1.0, the plugin will automatically _floor_
+  #   the value to the tenths place
+  #   This value represents the percentage of the allocated rate limit to consume
+  # Defaults to RATE_MEDIUM
+  # The default and slower (e.g. lower)  parameters will not generate errors
+  # RATE_FAST and faster (e.g. higher) parameters _may_ generate warnings and errors
+  # RATE_SLOW: 0.4
+  # RATE_MEDIUM: 0.5
+  # RATE_FAST: 0.6
+  #
+  # Format: Either the convenience or a string with the decimal of 0.1 -> 1.0
+  # Ex. "RATE_MEDIUM"
+  # Ex. "0.3"
+  config :rate_limit, :validate => :string, :default => "RATE_MEDIUM"
+
   # The file in which the auth_token for Okta will be contained.
   # This will contain the auth_token which can have a lot access to your Okta instance.
   # It cannot be stressed enough how important it is to protect this file.
@@ -117,7 +136,7 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
   # This option will reverse that paradigm and exit if a failure occurs
   #
   # Format: Boolean
-  config :state_file_fatal_falure, :validate => :boolean, :default => false
+  config :state_file_fatal_failure, :validate => :boolean, :default => false
 
   # If you'd like to work with the request/response metadata.
   # Set this value to the name of the field you'd like to store a nested
@@ -201,6 +220,11 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
   config :state_file_base, :validate => :string,
     :obsolete => "state_file_base is obsolete, use state_file_path instead"
  
+  # Based on data from here: https://developer.okta.com/docs/reference/api/system-log/#system-events
+  # -- For One App and Enterprise orgs, the warning is sent when the org is at 60% of its limit.
+  RATE_OPTIONS = {"RATE_SLOW" => 0.4, "RATE_MEDIUM" => 0.5, "RATE_FAST" => 0.6}
+  RATE_OPTIONS.default = false
+
   public
   Schedule_types = %w(cron every at in)
   def register
@@ -239,6 +263,12 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
         # Cast to string helps with that
         # Really only happens during tests and not during normal operations
         url_obj = URI.parse(@custom_url.to_s)
+        unless (url_obj.kind_of? URI::HTTP or url_obj.kind_of? URI::HTTPS)
+          raise LogStash::ConfigurationError, "Invalid custom_url, " +
+            "please verify the URL. custom_url = #{@custom_url}"
+          @logger.fatal("Invalid custom_url, " +
+            "please verify the URL. custom_url = #{@custom_url}")
+        end
       rescue URI::InvalidURIError
         @logger.fatal("Invalid custom_url, " +
           "please verify the URL. custom_url = #{@custom_url}")
@@ -357,6 +387,19 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
         end
       end
     end
+
+    if (RATE_OPTIONS[@rate_limit] != false)
+      @rate_limit = RATE_OPTIONS[@rate_limit]
+    else
+      @rate_limit = @rate_limit.to_f.floor 1
+    end
+
+    if (@rate_limit < 0.1 or @rate_limit > 1.0)
+      raise LogStash::ConfigurationError, "rate_limit should be between " +
+        "'0.1' and '1.0' or 'RATE_SLOW', 'RATE_MEDIUM' or 'RATE_FAST'"
+    end
+
+    @rate_limit_factor = 1.0 - @rate_limit
 
     params_event = Hash.new
     params_event[:limit] = @limit if @limit > 0
@@ -488,7 +531,7 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
       @metadata_function = method(:noop)
     end
 
-    if (@state_file_fatal_falure)
+    if (@state_file_fatal_failure)
       @state_file_failure_function = method(:fatal_state_file)
     else
       @state_file_failure_function = method(:error_state_file)
@@ -633,7 +676,11 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
       #  x.report { n.times { str.match(/<([^>]+)>/).captures[0] } } # (2) 262.166085sec @50000000 times
       #  x.report { n.times { str.split(';')[0][1...-1] } } # (1) 31.673270sec @50000000 times
       #end
-      
+
+
+      @logger.debug("Response headers", :headers => response.headers)
+      @trace_log_method.call("Response body", :body => response.body)
+
       # Store the next URL to call from the header
       next_url = nil
       Array(response.headers["link"]).each do |link_header|
@@ -644,7 +691,7 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
 
       if (response.body.length > 0)
         @codec.decode(response.body) do |decoded|
-          @logger.debug("Pushing event to queue")
+          @trace_log_method.call("Pushing event to queue")
           event = @target ? LogStash::Event.new(@target => decoded.to_hash) : decoded
           @metadata_function.call(event, requested_url, response, exec_time)
           decorate(event)
@@ -659,15 +706,16 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
         end
       end
 
+
       if (!next_url.nil? and next_url != @url)
         @url = next_url
-        @continue = true
-        @logger.debug("Continue status", :continue => @continue  )
-        # Add a sleep since we're gonna hit the API again
-        sleep SLEEP_API_RATE_LIMIT
+        if (response.headers['x-rate-limit-remaining'].to_i > response.headers['x-rate-limit-limit'].to_i * @rate_limit_factor and response.headers['x-rate-limit-remaining'].to_i > 0)
+          @continue = true
+          @trace_log_method.call("Rate Limit Status", :remaining => response.headers['x-rate-limit-remaining'].to_i, :limit => response.headers['x-rate-limit-limit'].to_i)
+        end
       end
+      @logger.debug("Continue status", :continue => @continue  )
 
-      @trace_log_method.call("Response body", :body => response.body)
 
     when HTTP_UNAUTHORIZED_401
       @codec.decode(response.body) do |decoded|
@@ -739,12 +787,50 @@ class LogStash::Inputs::OktaSystemLog < LogStash::Inputs::Base
       else
         handle_unknown_okta_code(queue,response,requested_url,exec_time)
       end
+    when HTTP_TOO_MANY_REQUESTS_429
+         @codec.decode(response.body) do |decoded|
+          event = @target ? LogStash::Event.new(@target => decoded.to_hash) : decoded
+          @metadata_function.call(event, requested_url, response, exec_time)
+          event.set("okta_response_error", {
+            "okta_plugin_status" => "rate limit exceeded; sleeping.",
+            "http_code" => 429,
+            "okta_error" => "E0000047",
+            "reset_time" => response.headers['x-rate-limit-reset']
+          })
+          event.tag("_okta_response_error")
+          decorate(event)
+          queue << event
+        end
+
+        now = get_epoch
+        sleep_time = (now - response.headers['x-rate-limit-reset'].to_i > 60) ? 60 : now - response.headers['x-rate-limit-reset'].to_i
+        @logger.error("Rate limited exceeded",
+          :response_code => response.code,
+          :okta_error => "E0000047",
+          :sleep_time => sleep_time,
+          :reset_time => response.headers['x-rate-limit-reset'])
+
+        @logger.debug("rate limit error response",
+          :response_body => response.body,
+          :response_headers => response.headers)
+
+        # Use a local function so the test can override it
+        local_sleep sleep_time
     else
       handle_unknown_http_code(queue,response,requested_url,exec_time)
     end
 
   end # def handle_success
 
+  private
+  def get_epoch()
+    return Time.now.to_i
+  end
+
+  private
+  def local_sleep(time)
+    sleep time
+  end
   private
   def handle_unknown_okta_code(queue,response,requested_url,exec_time)
     @codec.decode(response.body) do |decoded|

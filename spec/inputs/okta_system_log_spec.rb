@@ -15,6 +15,8 @@ describe LogStash::Inputs::OktaSystemLog do
   let(:default_host) { "localhost" }
   let(:metadata_target) { "_http_poller_metadata" }
   let(:default_state_file_path) { "/dev/null" }
+  let(:default_header) { {"x-rate-limit-remaining" => 3, "x-rate-limit-limit" => 4} }
+  let(:default_rate_limit) { "RATE_MEDIUM" }
 
   let(:default_opts) {
     {
@@ -24,6 +26,7 @@ describe LogStash::Inputs::OktaSystemLog do
       "auth_token_key" => default_auth_token_key,
       "metadata_target" => metadata_target,
       "state_file_path" => default_state_file_path,
+      "rate_limit"  => default_rate_limit,
       "codec" => "json"
     }
   }
@@ -68,7 +71,7 @@ describe LogStash::Inputs::OktaSystemLog do
 
     context "custom_url is in an incorrect format" do
       let(:opts) { 
-        opts = default_opts.merge({"custom_url" => "http://___/foo/bar"}).clone
+        opts = default_opts.merge({"custom_url" => "htp://___/foo/bar"}).clone
         opts.delete("hostname")
         opts
       }
@@ -102,6 +105,21 @@ describe LogStash::Inputs::OktaSystemLog do
 
     context "the q parameter item is too long" do
       let(:opts) { default_opts.merge({"q" => ["a" * 41]}) }
+      include_examples("configuration errors")
+    end
+
+    context "the rate_limit parameter is too large" do
+      let(:opts) { default_opts.merge({"rate_limit" => "1.5"}) }
+      include_examples("configuration errors")
+    end
+
+    context "the rate_limit parameter is too small" do
+      let(:opts) { default_opts.merge({"rate_limit" => "-0.5"}) }
+      include_examples("configuration errors")
+    end
+
+    context "the rate_limit parameter uses a non-standard stand-in" do
+      let(:opts) { default_opts.merge({"rate_limit" => "RATE_CRAWL"}) }
       include_examples("configuration errors")
     end
 
@@ -184,7 +202,8 @@ describe LogStash::Inputs::OktaSystemLog do
     before do
         subject.client.stub("https://#{default_opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
                             :body => "{}",
-                            :code => klass::HTTP_OK_200
+                            :code => klass::HTTP_OK_200,
+                            :headers => default_header
         )
        allow(File).to receive(:directory?).with(default_state_file_path) { false }
        allow(File).to receive(:exist?).with(default_state_file_path) { true }
@@ -220,7 +239,8 @@ describe LogStash::Inputs::OktaSystemLog do
     before do
       instance.client.stub("https://#{default_opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
                           :body => "{}",
-                          :code => klass::HTTP_OK_200
+                          :code => klass::HTTP_OK_200,
+                          :headers => default_header
       )
        allow(File).to receive(:directory?).and_call_original
        allow(File).to receive(:directory?).with(default_state_file_path) { false }
@@ -341,7 +361,8 @@ describe LogStash::Inputs::OktaSystemLog do
         unless (custom_settings)
           poller.client.stub("https://#{settings["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
                               :body => "{}",
-                              :code => klass::HTTP_OK_200
+                              :code => klass::HTTP_OK_200,
+                              :headers => default_header
                               )
         end
         allow(File).to receive(:directory?).with(default_state_file_path) { false }
@@ -429,6 +450,7 @@ describe LogStash::Inputs::OktaSystemLog do
       let(:code) { klass::HTTP_OK_200 }
       let(:hostname) { default_host }
       let(:custom_settings) { false }
+      let(:headers) { default_header }
 
       let(:opts) { default_opts }
       let(:instance) {
@@ -442,7 +464,8 @@ describe LogStash::Inputs::OktaSystemLog do
       before do
         instance.client.stub("https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
                             :body => "{}",
-                            :code => klass::HTTP_OK_200
+                            :code => klass::HTTP_OK_200,
+                            :headers => headers
                             )
         allow(File).to receive(:directory?).with(default_state_file_path) { false }
         allow(File).to receive(:exist?).with(default_state_file_path) { true }
@@ -456,9 +479,12 @@ describe LogStash::Inputs::OktaSystemLog do
         allow(instance).to receive(:decorate)
         instance.client.stub(%r{#{opts["hostname"]}.*}, 
                              :body => response_body,
-                             :code => code
+                             :code => code,
+                             :headers => headers
         )
 
+        allow(instance).to receive(:get_epoch) { 1 }
+        allow(instance).to receive(:local_sleep).with(1) { 1 }
         instance.send(:run_once, queue)
       end
 
@@ -475,7 +501,6 @@ describe LogStash::Inputs::OktaSystemLog do
       context "with an empty body" do
         let(:response_body) { "" }
         it "should return an empty event" do
-          instance.send(:run_once, queue)
           expect(event.get("[_http_poller_metadata][response_headers][content-length]")).to eql("0")
         end
       end
@@ -488,7 +513,6 @@ describe LogStash::Inputs::OktaSystemLog do
         }
 
         it "should not have any metadata on the event" do
-          instance.send(:run_once, queue)
           expect(event.get(metadata_target)).to be_nil
         end
       end
@@ -510,22 +534,30 @@ describe LogStash::Inputs::OktaSystemLog do
         let(:response_body) { "{}" }
 
         it "responds to a 500 code", :http_code => 500 do
-          instance.send(:run_once, queue)
           expect(event.to_hash).to include("http_response_error")
           expect(event.to_hash["http_response_error"]).to include({"http_code" => code})
           expect(event.get("tags")).to include('_http_response_error')
         end
         it "responds to a 401/Unauthorized code", :http_code => 401 do
-          instance.send(:run_once, queue)
           expect(event.to_hash).to include("okta_response_error")
           expect(event.to_hash["okta_response_error"]).to include({"http_code" => code})
           expect(event.get("tags")).to include('_okta_response_error')
         end
         it "responds to a 400 code", :http_code => 400 do
-          instance.send(:run_once, queue)
           expect(event.to_hash).to include("okta_response_error")
           expect(event.to_hash["okta_response_error"]).to include({"http_code" => code})
           expect(event.get("tags")).to include('_okta_response_error')
+        end
+        context "when the request rate limit is reached" do
+          let(:headers) { {"x-rate-limit-remaining" => 0, "x-rate-limit-reset" => 0} }
+          it "reports and sleeps for the designated time", :http_code => 429  do
+            expect(instance).to have_received(:get_epoch)
+            expect(instance).to have_received(:local_sleep).with(1)
+            expect(event.to_hash).to include("okta_response_error")
+            expect(event.to_hash["okta_response_error"]).to include({"http_code" => code})
+            expect(event.to_hash["okta_response_error"]).to include({"reset_time" => 0})
+            expect(event.get("tags")).to include('_okta_response_error')
+          end
         end
         context "specific okta errors" do
           let(:payload) { {:okta_error => "E0000031" } }
@@ -588,7 +620,8 @@ describe LogStash::Inputs::OktaSystemLog do
       before(:each) do
         subject.client.stub("https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
                             :body => "{}",
-                            :code => klass::HTTP_OK_200
+                            :code => klass::HTTP_OK_200,
+                            :headers => default_header
                             )
       end
 
@@ -672,7 +705,7 @@ describe LogStash::Inputs::OktaSystemLog do
       
       let(:url_initial) { "https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH}?after=1" }
       let(:url_final) { "https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH}?after=2" }
-      let(:headers) { {"link" => ["<#{url_initial}>; rel=\"self\"", "<#{url_final}>; rel=\"next\""]} }
+      let(:headers) { default_header.merge({"link" => ["<#{url_initial}>; rel=\"self\"", "<#{url_final}>; rel=\"next\""]}).clone }
       let(:code) { klass::HTTP_OK_200 }
       let(:file_path) { opts['state_file_dir'] + opts["state_file_prefix"] }
       let(:file_obj) { double("file") }
@@ -690,7 +723,8 @@ describe LogStash::Inputs::OktaSystemLog do
 
         instance.client.stub("https://#{opts["hostname"]+klass::OKTA_EVENT_LOG_PATH+klass::AUTH_TEST_URL}", 
                             :body => "{}",
-                            :code => code
+                            :code => code,
+                            :headers => default_header
                             )
         instance.register
         instance.client.stub( url_initial,
@@ -707,7 +741,7 @@ describe LogStash::Inputs::OktaSystemLog do
         expect(IO).to receive(:open).with(fd).and_yield(file_obj)
         expect(file_obj).to receive(:write).with("#{url_final}\n") { url_final.length + 1 }
         instance.client.stub( url_final,
-          :headers => {:link => "<#{url_final}>; rel=\"self\""},
+          :headers => default_header.merge({:link => "<#{url_final}>; rel=\"self\""}).clone,
           :body => "{}",
           :code => code )
         instance.send(:run_once, queue)
